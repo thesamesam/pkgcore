@@ -118,13 +118,11 @@ def _load_and_invoke(func, filename, read_func, fallback, allow_recurse,
     except IsADirectoryError as e:
         raise ProfileError(
             self.path, filename,
-            "path is a directory, but this profile is PMS format- "
-            "directories aren't allowed. See layout.conf profile-formats "
-            "to enable directory support") from e
+            "path is a directory, directories aren't allowed") from e
 
 
 _make_incrementals_dict = partial(misc.IncrementalsDict, const.incrementals)
-_Packages = namedtuple("_Packages", ("system", "profile"))
+_Packages = namedtuple("_Packages", ("system",))
 
 
 class ProfileNode(metaclass=caching.WeakInstMeta):
@@ -145,7 +143,6 @@ class ProfileNode(metaclass=caching.WeakInstMeta):
         return '<%s path=%r, @%#8x>' % (self.__class__.__name__, self.path, id(self))
 
     system = klass.alias_attr("packages.system")
-    profile_set = klass.alias_attr("packages.profile")
 
     @klass.jit_attr
     def name(self):
@@ -158,10 +155,7 @@ class ProfileNode(metaclass=caching.WeakInstMeta):
 
     @load_property("packages")
     def packages(self, data):
-        repo_config = self.repoconfig
-        # TODO: get profile-set support into PMS
-        profile_set = repo_config is not None and 'profile-set' in repo_config.profile_formats
-        sys, neg_sys, pro, neg_pro = [], [], [], []
+        sys, neg_sys = [], []
         neg_wildcard = False
         for line, lineno, relpath in data:
             try:
@@ -170,55 +164,22 @@ class ProfileNode(metaclass=caching.WeakInstMeta):
                         neg_wildcard = True
                     elif line[1] == '*':
                         neg_sys.append(self.eapi_atom(line[2:]))
-                    elif profile_set:
-                        neg_pro.append(self.eapi_atom(line[1:]))
                     else:
                         logger.error(f'{relpath!r}: invalid line format, line {lineno}: {line!r}')
                 else:
                     if line[0] == '*':
                         sys.append(self.eapi_atom(line[1:]))
-                    elif profile_set:
-                        pro.append(self.eapi_atom(line))
                     else:
                         logger.error(f'{relpath!r}: invalid line format, line {lineno}: {line!r}')
             except ebuild_errors.MalformedAtom as e:
                 logger.error(f'{relpath!r}, line {lineno}: parsing error: {e}')
         system = [tuple(neg_sys), tuple(sys)]
-        profile = [tuple(neg_pro), tuple(pro)]
         if neg_wildcard:
             system.append(neg_wildcard)
-            profile.append(neg_wildcard)
-        return _Packages(tuple(system), tuple(profile))
+        return _Packages(tuple(system))
 
     @load_property("parent")
     def parent_paths(self, data):
-        repo_config = self.repoconfig
-        if repo_config is not None and 'portage-2' in repo_config.profile_formats:
-            l = []
-            for line, lineno, relpath in data:
-                repo_id, separator, profile_path = line.partition(':')
-                if separator:
-                    if repo_id:
-                        try:
-                            location = self._repo_map[repo_id]
-                        except KeyError:
-                            # check if requested repo ID matches the current
-                            # repo which could be the case when running against
-                            # unconfigured, external repos.
-                            if repo_id == repo_config.repo_id:
-                                location = repo_config.location
-                            else:
-                                logger.error(
-                                    f'repo {repo_config.repo_id!r}: '
-                                    f"{relpath!r} (line {lineno}), "
-                                    f'bad profile parent {line!r}: '
-                                    f'unknown repo {repo_id!r}'
-                                )
-                                continue
-                    l.append((abspath(pjoin(location, 'profiles', profile_path)), line, lineno))
-                else:
-                    l.append((abspath(pjoin(self.path, repo_id)), line, lineno))
-            return tuple(l)
         return tuple((abspath(pjoin(self.path, line)), line, lineno)
                      for line, lineno, relpath in data)
 
@@ -495,17 +456,7 @@ class ProfileNode(metaclass=caching.WeakInstMeta):
     @classmethod
     def _autodetect_and_create(cls, path):
         repo_config = cls._load_repoconfig_from_path(path)
-
-        # note while this else seems pointless, we do it this
-        # way so that we're not passing an arg unless needed- instance
-        # caching is a bit overprotective, even if pms_strict defaults to True,
-        # cls(path) is not cls(path, pms_strict=True)
-
-        if repo_config is not None and 'pms' not in repo_config.profile_formats:
-            profile = cls(path, pms_strict=False)
-        else:
-            profile = cls(path)
-
+        profile = cls(path)
         # optimization to avoid re-parsing what we already did.
         object.__setattr__(profile, '_repoconfig', repo_config)
         return profile
@@ -520,7 +471,7 @@ class EmptyRootNode(ProfileNode):
     pkg_use = masked_use = stable_masked_use = forced_use = stable_forced_use = misc.ChunkedDataDict()
     forced_use.freeze()
     pkg_use_force = pkg_use_mask = ImmutableDict()
-    pkg_provided = system = profile_set = ((), ())
+    pkg_provided = system = ((), ())
 
 
 class ProfileStack:
@@ -744,10 +695,6 @@ class ProfileStack:
     @klass.jit_attr
     def system(self):
         return frozenset(self._collapse_generic('system', clear=True))
-
-    @klass.jit_attr
-    def profile_set(self):
-        return frozenset(self._collapse_generic('profile_set', clear=True))
 
 
 class OnDiskProfile(ProfileStack):

@@ -705,7 +705,6 @@ class RepoConfig(syncable.tree, klass.ImmutableInstance, metaclass=WeakInstMeta)
 
     default_hashes = ('size', 'blake2b', 'sha512')
     default_required_hashes = ('size', 'blake2b')
-    supported_profile_formats = ('pms', 'portage-1', 'portage-2', 'profile-set')
     supported_cache_formats = ('md5-dict', 'pms')
 
     __inst_caching__ = True
@@ -800,22 +799,6 @@ class RepoConfig(syncable.tree, klass.ImmutableInstance, metaclass=WeakInstMeta)
                 logger.warning('unknown cache format: falling back to md5-dict format')
                 v = ['md5-dict']
         sf(self, 'cache_format', list(v)[0])
-
-        profile_formats = set(data.get('profile-formats', 'pms').lower().split())
-        if not profile_formats:
-            logger.info(
-                f"{self.repo_id!r} repo at {self.location!r} has explicitly "
-                "unset profile-formats, defaulting to pms")
-            profile_formats = {'pms'}
-        unknown = profile_formats.difference(self.supported_profile_formats)
-        if unknown:
-            logger.info(
-                "%r repo at %r has unsupported profile format%s: %s",
-                self.repo_id, self.location, pluralism(unknown),
-                ', '.join(sorted(unknown)))
-            profile_formats.difference_update(unknown)
-            profile_formats.add('pms')
-        sf(self, 'profile_formats', profile_formats)
 
     @klass.jit_attr
     def known_arches(self):
@@ -981,8 +964,7 @@ class RepoConfig(syncable.tree, klass.ImmutableInstance, metaclass=WeakInstMeta)
 
     @klass.jit_attr
     def base_profile(self):
-        pms_strict = 'pms' in self.profile_formats
-        return profiles.EmptyRootNode(self.profiles_base, pms_strict=pms_strict)
+        return profiles.EmptyRootNode(self.profiles_base)
 
     @klass.jit_attr
     def eapi(self):
